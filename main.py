@@ -11,55 +11,58 @@ CONFIG_FILE="rutas.txt"
 mkdir -p "$LOG_DIR"
 touch "$LOG_FILE"
 
-# Función para registrar mensajes (No será necesaria ya que todo será redirigido)
-log_message() {
-    echo "$1"  # Solo imprime el mensaje
-}
-
 # Redirige toda la salida y errores al archivo de log y también a la consola
 exec &> >(tee -a "$LOG_FILE")
 
 echo "Iniciando Script"
 
-# Función para subir los archivos al repositorio de GitHub
-git_push() {
+# Función para manejar la subida de archivos al repositorio de GitHub
+process_directory() {
     local folder_path="$1"
     local repo_url="$2"
     local branch="${3:-}"
 
-    echo "Iniciando subida para $folder_path hacia $repo_url${branch:+ en la rama $branch}."
+    echo "Revisando $folder_path para cambios..."
+    cd "$folder_path" || { echo "Error al cambiar al directorio $folder_path"; return 1; }
 
-    cd "$folder_path" || exit
+    # Verifica si hay cambios en el directorio
+    if ! git diff-index --quiet HEAD --; then
+        echo "Cambios detectados en $folder_path. Iniciando subida..."
 
-    # Inicializa git si no está inicializado
-    if [ ! -d ".git" ]; then
-        git init
-        git remote add origin "$repo_url"
-        echo "Repositorio git inicializado y remoto configurado."
+        # Inicializa git si no está inicializado
+        if [ ! -d ".git" ]; then
+            git init
+            git remote add origin "$repo_url"
+            echo "Repositorio git inicializado y remoto configurado."
+        else
+            git remote set-url origin "$repo_url"
+            echo "URL del remoto actualizada."
+        fi
+
+        git add .
+        echo "Archivos añadidos al staging."
+
+        # Commit y push
+        if git commit -m "Automated commit"; then
+            echo "Commit realizado exitosamente."
+            git push --set-upstream origin $(git rev-parse --abbrev-ref HEAD)
+            echo "Push realizado exitosamente."
+        else
+            echo "Error al realizar commit."
+        fi
     else
-        git remote set-url origin "$repo_url"
-        echo "URL del remoto actualizada."
-    fi
-
-    # Añade todos los archivos
-    git add .
-    echo "Archivos añadidos al staging."
-
-    # Commit y push
-    if git commit -m "Automated commit"; then
-        echo "Commit realizado exitosamente."
-        git push --set-upstream origin $(git rev-parse --abbrev-ref HEAD)
-        echo "Push realizado exitosamente."
-    else
-        echo "Error al realizar commit. No hay cambios para commit o hubo un error."
+        echo "No se detectaron cambios en $folder_path. No se realiza subida."
     fi
 }
 
 # Leer el archivo de configuración y procesar cada línea
-while IFS=, read -r path repo branch
+while IFS=, read -r path repo branch || [[ -n "$path" ]]
 do
+    echo "Procesando: $path, $repo, $branch"
     if [[ -n "$path" && -n "$repo" ]]; then
-        git_push "$path" "$repo" "$branch"
+        process_directory "$path" "$repo" "$branch"
+    else
+        echo "Línea de configuración inválida: $path, $repo, $branch"
     fi
 done < "$CONFIG_FILE"
 
